@@ -122,8 +122,8 @@ else:
             center_lat = (lat1 + lat2) / 2
             center_lon = (lon1 + lon2) / 2
 
-            # 2. Создаем базовый объект карты Folium (используем открытый стиль OpenStreetMap)
-            m = folium.Map(location=[center_lat, center_lon], zoom_start=5, control_scale=True)
+            # 2. Создаем базовый объект карты Folium (без жесткого зума!)
+            m = folium.Map(location=[center_lat, center_lon], control_scale=True)
 
             # 3. Ставим маркер для точки отправления (А)
             folium.Marker(
@@ -139,16 +139,39 @@ else:
                 icon=folium.Icon(color="red", icon="stop")
             ).add_to(m)
 
-            # 5. Рисуем красивую синюю линию маршрута, соединяющую города
+            # 5. СТРОИМ РЕАЛЬНЫЙ МАРШРУТ ПО ДОРОГАМ (ЧЕРЕЗ БЕСПЛАТНЫЙ НАВИГАЦИОННЫЙ API OSRM)
+            route_points = [[lat1, lon1], [lat2, lon2]]  # По умолчанию прямая линия
+
+            try:
+                # Делаем запрос к открытому серверу маршрутизации для автомобиля
+                # Внимание: OSRM принимает координаты в формате [Долгота,Широта]
+                osrm_url = f"https://project-osrm.org{lon1},{lat1};{lon2},{lon2}?overview=full&geometries=geojson"
+                osrm_response = requests.get(osrm_url, timeout=4)
+
+                if osrm_response.status_code == 200:
+                    data = osrm_response.json()
+                    if "routes" in data and len(data["routes"]) > 0:
+                        # Извлекаем гео-координаты всех поворотов реальной трассы
+                        geojson_geometry = data["routes"][0]["geometry"]["coordinates"]
+                        # Переворачиваем обратно в формат Folium [Широта, Долгота]
+                        route_points = [[coord[1], coord[0]] for coord in geojson_geometry]
+            except Exception:
+                pass  # Если интернета нет или сервер лег - нарисуется базовая прямая линия
+
+            # Рисуем извилистую реальную автомобильную трассу, соединяющую города!
             folium.PolyLine(
-                locations=[[lat1, lon1], [lat2, lon2]],
+                locations=route_points,
                 color="blue",
-                weight=4,
-                opacity=0.7
+                weight=5,
+                opacity=0.85
             ).add_to(m)
 
-            # 6. Рендерим готовую карту на экран Streamlit
+            # 6. МАГИЯ АВТО-МАСШТАБА: Заставляем карту идеально сфокусироваться на точках маршрута
+            m.fit_bounds([[lat1, lon1], [lat2, lon2]], padding=[30, 30])
+
+            # 7. Рендерим готовую адаптивную карту на экран Streamlit
             st_folium(m, width="100%", height=400, key=f"map_folium_{t_id}")
+
 
             # Кнопки управления (12 пробелов отступа внутри контейнера)
             btn_col1, btn_col2 = st.columns(2)
