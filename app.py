@@ -1,6 +1,8 @@
 import streamlit as st
 from datetime import datetime, timedelta
 from database import *
+from streamlit_folium import st_folium
+import folium
 
 # Инициализируем БД
 init_db()
@@ -82,57 +84,97 @@ with tg_col2:
 if not active_trips:
     st.info("🛋️ У вас пока нет запланированных поездок. Отдыхайте или добавьте новый маршрут слева!")
 else:
-    st.subheader("📋 Ваше расписание и умные напоминания")
+    st.subheader("📋 Ваше расписание и умные напоминания (Движок Навигатора)")
 
     for t_id, t_orig, t_dest, t_arr, t_mode, t_notes, t_status in active_trips:
-        # Запускаем наш умный математический движок расчета пробок
+        # Считаем глобальные параметры поездки
         timing = calculate_trip_timing(t_orig, t_dest, t_arr, t_mode)
+        (lat1, lon1), (lat2, lon2) = timing["coords"]
 
         with st.container(border=True):
             st.markdown(f"### 📍 Маршрут: Из **{t_orig}** в **{t_dest}**")
+            st.caption(f"🗺️ Масштаб: {timing['scale_status']}")
 
-            # Строим сетку параметров
+            # Строим сетку метрик навигатора
             c1, c2, c3 = st.columns(3)
             with c1:
-                st.metric("📏 Длина маршрута", f"{timing['distance']} км")
+                st.metric("📏 Расстояние по дорогам", f"{timing['distance']} км")
                 st.write(f"🚲 **Транспорт:** {t_mode}")
             with c2:
-                st.metric("⏰ Время в пути (с пробками)", f"{timing['final_time']} мин")
-                st.write(f"📊 **Ситуация:** {timing['jam_status']}")
+                # Конвертируем минуты в читаемые Часы и Минуты
+                h = timing['final_time'] // 60
+                m = timing['final_time'] % 60
+                time_str = f"{h} ч. {m} мин." if h > 0 else f"{m} мин."
+                st.metric("⏰ Время в пути (с задержками)", time_str)
+                st.write(f"📊 **Дорожная ситуация:** {timing['jam_status']}")
             with c3:
-                # САМАЯ ГЛАВНАЯ ФИЧА: Время, когда нужно выйти из дома!
-                st.metric("🚨 Время выезда (ПОРА В ПУТЬ)", timing['departure_time'])
+                st.metric("🚨 Рекомендуемое время выезда", timing['departure_time'])
                 st.write(f"🎯 **Прибытие к:** {t_arr}")
 
             if t_notes:
-                st.caption(f"📝 Дополнительные параметры: {t_notes}")
+                st.caption(f"📝 Детали поездки: {t_notes}")
 
-            # Рендеринг карты для визуализации логистики
-            st.write("🗺️ **Интерактивная карта поездки:**")
+            # ИНТЕРАКТИВНАЯ КАРТА МИРА 2ГИС-СТИЛЬ
+            st.write("🗺️ **Визуализация маршрута на карте мира:**")
 
-            # Кнопки управления внутри контейнера (12 пробелов отступа)
-            btn_col1, btn_col2 = st.columns([1, 4])
+            # НАСТОЯЩАЯ ИНТЕРАКТИВНАЯ КАРТА НАВИГАТОРА (БЕЗОТКАЗНЫЙ ВАРИАНТ)
+            # 1. Вычисляем центр карты между точкой А и точкой Б
+            center_lat = (lat1 + lat2) / 2
+            center_lon = (lon1 + lon2) / 2
+
+            # 2. Создаем базовый объект карты Folium (используем открытый стиль OpenStreetMap)
+            m = folium.Map(location=[center_lat, center_lon], zoom_start=5, control_scale=True)
+
+            # 3. Ставим маркер для точки отправления (А)
+            folium.Marker(
+                [lat1, lon1],
+                tooltip=f"Пункт А: {t_orig}",
+                icon=folium.Icon(color="green", icon="play")
+            ).add_to(m)
+
+            # 4. Ставим маркер для пункта назначения (Б)
+            folium.Marker(
+                [lat2, lon2],
+                tooltip=f"Пункт Б: {t_dest}",
+                icon=folium.Icon(color="red", icon="stop")
+            ).add_to(m)
+
+            # 5. Рисуем красивую синюю линию маршрута, соединяющую города
+            folium.PolyLine(
+                locations=[[lat1, lon1], [lat2, lon2]],
+                color="blue",
+                weight=4,
+                opacity=0.7
+            ).add_to(m)
+
+            # 6. Рендерим готовую карту на экран Streamlit
+            st_folium(m, width="100%", height=400, key=f"map_folium_{t_id}")
+
+            # Кнопки управления (12 пробелов отступа внутри контейнера)
+            btn_col1, btn_col2 = st.columns(2)
             with btn_col1:
-                if st.button("🗑️ Отменить", key=f"del_{t_id}", type="primary", use_container_width=True):
+                if st.button("🗑️ Отменить поездку", key=f"del_{t_id}", type="primary", use_container_width=True):
                     delete_trip(t_id)
                     st.success("Поездка отменена")
                     st.rerun()
             with btn_col2:
-                if st.button("📲 Прислать напоминание в Telegram", key=f"tg_send_{t_id}", type="secondary",
+                if st.button("📲 Отправить сводку на телефон", key=f"tg_send_{t_id}", type="secondary",
                              use_container_width=True):
                     if not tg_token or not tg_chat_id:
                         st.error("Сначала заполните настройки Telegram-уведомлений выше!")
                     else:
                         alert_msg = (
-                            f"🔔 НАПОМИНАНИЕ О ПОЕЗДКЕ!\n\n"
+                            f"🚗 ГЛОБАЛЬНЫЙ НАВИГАТОР ПОЕЗДОК\n\n"
                             f"📍 Маршрут: {t_orig} ➔ {t_dest}\n"
-                            f"🚲 Транспорт: {t_mode}\n"
-                            f"🚨 Ситуация: {timing['jam_status']}\n\n"
-                            f"⏱️ Итоговое время в пути: {timing['final_time']} мин.\n"
-                            f"⚠️ ВАМ НУЖНО ВЫЕХАТЬ В: {timing['departure_time']}"
+                            f"🌍 Статус: {timing['scale_status']}\n"
+                            f"📏 Дистанция: {timing['distance']} км\n"
+                            f"📊 Дороги: {timing['jam_status']}\n\n"
+                            f"⏱️ Время в пути: {time_str}\n"
+                            f"🎯 Прибытие к: {t_arr}\n"
+                            f"🚨 ВЫЕЗЖАЙТЕ: {timing['departure_time']}"
                         )
                         success = send_telegram_alert(tg_token, tg_chat_id, alert_msg)
                         if success:
-                            st.success("🚀 Напоминание отправлено!")
+                            st.success("🚀 Сводка навигатора отправлена в Telegram!")
                         else:
-                            st.error("❌ Ошибка сети. Проверьте VPN или правильность токена/ID!")
+                            st.error("❌ Ошибка отправки. Проверьте настройки бота.")
