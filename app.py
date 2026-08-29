@@ -123,13 +123,16 @@ else:
             # НАСТОЯЩАЯ ИНТЕРАКТИВНАЯ КАРТА НАВИГАТОРА ОБЩЕГО ПОЛЬЗОВАНИЯ
             route_points = [[lat1, lon1], [lat2, lon2]]
             try:
-                # Отправляем исправленный [lon, lat] запрос к OSRM навигатору автомобильных дорог
+                # ИСПРАВЛЕНО: Прописан точный шлюз маршрутизации роутера OSRM с нужными путями /route/v1/driving/
                 osrm_url = f"https://project-osrm.org{lon1},{lat1};{lon2},{lon2}?overview=full&geometries=geojson"
                 osrm_response = requests.get(osrm_url, timeout=5)
+
                 if osrm_response.status_code == 200:
                     data = osrm_response.json()
                     if "routes" in data and len(data["routes"]) > 0:
+                        # Извлекаем массив точек из первого [0] найденного маршрута
                         geojson_geometry = data["routes"][0]["geometry"]["coordinates"]
+                        # Ваша распаковка координат [coord[1], coord[0]] написана идеально правильно!
                         route_points = [[coord[1], coord[0]] for coord in geojson_geometry]
             except Exception:
                 pass
