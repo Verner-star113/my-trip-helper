@@ -1,65 +1,10 @@
 import sqlite3
-import json
-import urllib.request
-import urllib.parse
-import requests  # <-- ВОТ ЭТУ СТРОЧКУ НУЖНО ДОБАВИТЬ!
+import requests
 from datetime import datetime, timedelta
 import math
 
-
-def init_db():
-    conn = sqlite3.connect("trips.db", timeout=10)
-    cursor = conn.cursor()
-    # Таблица для планирования поездок
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS trips (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            origin_city TEXT NOT NULL,
-            origin_address TEXT,
-            destination_city TEXT NOT NULL,
-            destination_address TEXT,
-            arrival_time TEXT NOT NULL,
-            transport_mode TEXT NOT NULL,
-            notes TEXT,
-            status TEXT DEFAULT 'Запланирована'
-        )
-    """)
-    conn.commit()
-    conn.close()
-
-def add_trip(origin_city, origin_address, destination_city, destination_address, arrival_time, transport_mode, notes=""):
-    conn = sqlite3.connect("trips.db", timeout=10)
-    cursor = conn.cursor()
-    cursor.execute("""
-        INSERT INTO trips (origin_city, origin_address, destination_city, destination_address, arrival_time, transport_mode, notes)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-    """, (origin_city, origin_address, destination_city, destination_address, arrival_time, transport_mode, notes))
-    conn.commit()
-    conn.close()
-
-def get_active_trips():
-    conn = sqlite3.connect("trips.db", timeout=10)
-    cursor = conn.cursor()
-    cursor.execute("SELECT id, origin_city, origin_address, destination_city, destination_address, arrival_time, transport_mode, notes, status FROM trips WHERE status = 'Запланирована'")
-    rows = cursor.fetchall()
-    conn.close()
-    return rows
-
-def delete_trip(trip_id):
-    conn = sqlite3.connect("trips.db", timeout=10)
-    cursor = conn.cursor()
-    cursor.execute("DELETE FROM trips WHERE id = ?", (int(trip_id),))
-    conn.commit()
-    conn.close()
-
-
-# --- ДВИЖОК УМНОГО РАСЧЕТА МАРШРУТА И ПРОБОК ---
-# Встроенный справочник координат для умного навигатора (широта, долгота)
-# Вы можете дописывать сюда любые города и страны мира!
 # --- ГЛОБАЛЬНЫЙ ГЕО-СПРАВОЧНИК ГОРОДОВ И СТРАН МИРА (БАЗА ДАННЫХ НАВИГАТОРА) ---
-# Структура: "город": (Широта, Долгота, "Страна", "Регион/Тип")
 GEO_REGISTRY = {
-    # 🇷🇺 РОССИЯ (Крупные города и региональные центры)
     "томск": (56.4977, 84.9744, "Россия", "Сибирь"),
     "новосибирск": (55.0084, 82.9357, "Россия", "Сибирь"),
     "кемерово": (55.3450, 86.0640, "Россия", "Сибирь"),
@@ -82,44 +27,70 @@ GEO_REGISTRY = {
     "сочи": (43.6028, 39.7342, "Россия", "Юг"),
     "владивосток": (43.1198, 131.8869, "Россия", "Дальний Восток"),
     "хабаровск": (48.4725, 135.0577, "Россия", "Дальний Восток"),
-
-    # 🌍 СТРАНЫ СНГ И БЛИЖНЕЕ ЗАРУБЕЖЬЕ
     "минск": (53.9006, 27.5590, "Беларусь", "Столица"),
     "брест": (52.0976, 23.7341, "Беларусь", "Граница"),
-    "гомель": (52.4345, 30.9754, "Беларусь", "Регион"),
     "астана": (51.1605, 71.4704, "Казахстан", "Столица"),
     "алматы": (43.2389, 76.8897, "Казахстан", "Юг"),
-    "павлодар": (52.2833, 76.9667, "Казахстан", "Север"),
-    "ташкент": (41.2995, 69.2401, "Узбекистан", "Столица"),
-    "бишкек": (42.8746, 74.5698, "Кыргызстан", "Столица"),
-    "ереван": (40.1792, 44.5152, "Армения", "Столица"),
-    "баку": (40.4093, 49.8671, "Азербайджан", "Столица"),
-    "тбилиси": (41.7151, 44.8271, "Грузия", "Столица"),
-
-    # 🗺️ ДАЛЬНЕЕ ЗАРУБЕЖЬЕ (Популярные направления)
     "пекин": (39.9042, 116.4074, "Китай", "Азия"),
-    "шанхай": (31.2304, 121.4737, "Китай", "Азия"),
-    "урумчи": (43.8256, 87.6168, "Китай", "Граница/Азия"),
-    "берлин": (52.5200, 13.4050, "Германия", "Европа"),
-    "париж": (48.8566, 2.3522, "Франция", "Европа"),
-    "рим": (41.9028, 12.4964, "Италия", "Европа"),
-    "лондон": (51.5074, -0.1278, "Великобритания", "Европа"),
-    "стамбул": (41.0082, 28.9784, "Турция", "Европа/Азия"),
-    "анталья": (36.8969, 30.7133, "Турция", "Курорт"),
-    "дубай": (25.2048, 55.2708, "ОАЭ", "Ближний Восток"),
-    "токио": (35.6762, 139.6503, "Япония", "Азия")
+    "берлин": (52.5200, 13.4050, "Германия", "Европа")
 }
 
 
+def init_db():
+    conn = sqlite3.connect("trips.db", timeout=10)
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS trips (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            origin_city TEXT NOT NULL,
+            origin_address TEXT,
+            destination_city TEXT NOT NULL,
+            destination_address TEXT,
+            arrival_time TEXT NOT NULL,
+            transport_mode TEXT NOT NULL,
+            notes TEXT,
+            status TEXT DEFAULT 'Запланирована'
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+
+def add_trip(origin_city, origin_address, destination_city, destination_address, arrival_time, transport_mode,
+             notes=""):
+    conn = sqlite3.connect("trips.db", timeout=10)
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT INTO trips (origin_city, origin_address, destination_city, destination_address, arrival_time, transport_mode, notes)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    """, (origin_city, origin_address, destination_city, destination_address, arrival_time, transport_mode, notes))
+    conn.commit()
+    conn.close()
+
+
+def get_active_trips():
+    conn = sqlite3.connect("trips.db", timeout=10)
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT id, origin_city, origin_address, destination_city, destination_address, arrival_time, transport_mode, notes, status FROM trips WHERE status = 'Запланирована'")
+    rows = cursor.fetchall()
+    conn.close()
+    return rows
+
+
+def delete_trip(trip_id):
+    conn = sqlite3.connect("trips.db", timeout=10)
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM trips WHERE id = ?", (int(trip_id),))
+    conn.commit()
+    conn.close()
+
+
 def get_location_data(location_name):
-    """Ищет локацию в справочнике и возвращает широту, долготу и страну в чистом виде."""
     name_clean = str(location_name).strip().lower()
     for key, data in GEO_REGISTRY.items():
         if key in name_clean:
-            # Четко отдаем 3 элемента: Широта, Долгота, Страна
             return data[0], data[1], data[2]
-
-    # Если города нет в базе, симулируем координаты (чтобы приложение никогда не падало)
     fake_lat = 55.0 + (len(name_clean) % 5) * 0.5
     fake_lon = 75.0 + (len(name_clean) % 7) * 0.5
     return fake_lat, fake_lon, "Неизвестно"
@@ -135,12 +106,10 @@ def calculate_great_circle_distance(lat1, lon1, lat2, lon2):
 
 
 def calculate_trip_timing(orig_city, orig_addr, dest_city, dest_addr, arrival_str, transport_mode):
-    """Глобальный навигационный движок. Точно определяет города и рассчитывает трассы."""
-    # Ищем строгие координаты городов в GEO_REGISTRY
+    """Глобальный навигационный движок. Занимается ТОЛЬКО математикой времени и расстояний."""
     lat1, lon1, country1 = get_location_data(orig_city)
     lat2, lon2, country2 = get_location_data(dest_city)
 
-    # Небольшое микро-смещение координат, если указана конкретная улица (симулируем точность навигатора)
     if orig_addr.strip():
         lat1 += (len(orig_addr) % 10) * 0.002
         lon1 += (len(orig_addr) % 7) * 0.002
@@ -148,9 +117,8 @@ def calculate_trip_timing(orig_city, orig_addr, dest_city, dest_addr, arrival_st
         lat2 += (len(dest_addr) % 10) * 0.002
         lon2 += (len(dest_addr) % 7) * 0.002
 
-    # Расчет расстояния
     geo_distance = calculate_great_circle_distance(lat1, lon1, lat2, lon2)
-    road_distance = geo_distance * 1.22  # Средний дорожный коэффициент
+    road_distance = geo_distance * 1.22
 
     if "автомобиле" in transport_mode:
         speed = 80
@@ -163,8 +131,8 @@ def calculate_trip_timing(orig_city, orig_addr, dest_city, dest_addr, arrival_st
         buffer_min = 10
 
     pure_time_min = int((road_distance / speed) * 60)
-
     border_delay = 0
+
     if country1 != country2 and country1 != "Неизвестно" and country2 != "Неизвестно":
         scale_status = f"🌍 Международный маршрут ({country1} ➔ {country2})"
         border_delay = 150
@@ -198,14 +166,16 @@ def calculate_trip_timing(orig_city, orig_addr, dest_city, dest_addr, arrival_st
     }
 
 
-# --- СИСТЕМА TELEGRAM УВЕДОМЛЕНИЙ ---
 def send_telegram_alert(token, chat_id, message):
-    """Классический автоматический отправщик для работы в облаке."""
+    """Бронебойный прямой отправщик уведомлений в Telegram API."""
     if not token or not chat_id:
         return False
     try:
-        url = f"https://api.telegram.org/bot{token}/sendMessage"
-        payload = {"chat_id": str(chat_id).strip(), "text": message}
+        url = f"https://telegram.org{str(token).strip()}/sendMessage"
+        payload = {
+            "chat_id": str(chat_id).strip(),
+            "text": message
+        }
         response = requests.post(url, json=payload, timeout=5)
         return response.status_code == 200
     except Exception:
