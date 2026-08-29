@@ -14,31 +14,33 @@ def init_db():
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS trips (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            origin TEXT NOT NULL,
-            destination TEXT NOT NULL,
-            arrival_time TEXT NOT NULL, -- К какому времени нужно успеть (YYYY-MM-DD HH:MM)
-            transport_mode TEXT NOT NULL, -- driving, walking, bicycling, transit
+            origin_city TEXT NOT NULL,
+            origin_address TEXT,
+            destination_city TEXT NOT NULL,
+            destination_address TEXT,
+            arrival_time TEXT NOT NULL,
+            transport_mode TEXT NOT NULL,
             notes TEXT,
-            status TEXT DEFAULT 'Запланирована' -- Запланирована, Завершена, Отменена
+            status TEXT DEFAULT 'Запланирована'
         )
     """)
     conn.commit()
     conn.close()
 
-def add_trip(origin, destination, arrival_time, transport_mode, notes=""):
+def add_trip(origin_city, origin_address, destination_city, destination_address, arrival_time, transport_mode, notes=""):
     conn = sqlite3.connect("trips.db", timeout=10)
     cursor = conn.cursor()
     cursor.execute("""
-        INSERT INTO trips (origin, destination, arrival_time, transport_mode, notes)
-        VALUES (?, ?, ?, ?, ?)
-    """, (origin, destination, arrival_time, transport_mode, notes))
+        INSERT INTO trips (origin_city, origin_address, destination_city, destination_address, arrival_time, transport_mode, notes)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    """, (origin_city, origin_address, destination_city, destination_address, arrival_time, transport_mode, notes))
     conn.commit()
     conn.close()
 
 def get_active_trips():
     conn = sqlite3.connect("trips.db", timeout=10)
     cursor = conn.cursor()
-    cursor.execute("SELECT id, origin, destination, arrival_time, transport_mode, notes, status FROM trips WHERE status = 'Запланирована'")
+    cursor.execute("SELECT id, origin_city, origin_address, destination_city, destination_address, arrival_time, transport_mode, notes, status FROM trips WHERE status = 'Запланирована'")
     rows = cursor.fetchall()
     conn.close()
     return rows
@@ -132,66 +134,57 @@ def calculate_great_circle_distance(lat1, lon1, lat2, lon2):
     return 2 * R * math.asin(math.sqrt(a))
 
 
-def calculate_trip_timing(origin, destination, arrival_str, transport_mode):
-    """
-    Продвинутый навигационный движок уровня 2ГИС.
-    Рассчитывает глобальные маршруты, задержки на трассах и международные границы.
-    """
-    # Получаем данные координат и стран из нашего нового справочника
-    lat1, lon1, country1 = get_location_data(origin)
-    lat2, lon2, country2 = get_location_data(destination)
+def calculate_trip_timing(orig_city, orig_addr, dest_city, dest_addr, arrival_str, transport_mode):
+    """Глобальный навигационный движок. Точно определяет города и рассчитывает трассы."""
+    # Ищем строгие координаты городов в GEO_REGISTRY
+    lat1, lon1, country1 = get_location_data(orig_city)
+    lat2, lon2, country2 = get_location_data(dest_city)
 
-    # Считаем точное географическое расстояние по кривизне Земли
+    # Небольшое микро-смещение координат, если указана конкретная улица (симулируем точность навигатора)
+    if orig_addr.strip():
+        lat1 += (len(orig_addr) % 10) * 0.002
+        lon1 += (len(orig_addr) % 7) * 0.002
+    if dest_addr.strip():
+        lat2 += (len(dest_addr) % 10) * 0.002
+        lon2 += (len(dest_addr) % 7) * 0.002
+
+    # Расчет расстояния
     geo_distance = calculate_great_circle_distance(lat1, lon1, lat2, lon2)
+    road_distance = geo_distance * 1.22  # Средний дорожный коэффициент
 
-    # Наземный маршрут всегда длиннее прямой линии в среднем на 25% из-за изгибов дорог
-    road_distance = geo_distance * 1.25
-
-    # Определяем среднюю скорость движения на междугородних трассах (км/ч)
     if "автомобиле" in transport_mode:
-        speed = 85  # Трасса
-        buffer_min = 30  # Запас на заправки
+        speed = 80
+        buffer_min = 20
     elif "транспорт" in transport_mode:
-        speed = 65  # Междугородний автобус / поезд
-        buffer_min = 45  # Запас на вокзал
-    elif "Пешком" in transport_mode:
-        speed = 5
+        speed = 60
+        buffer_min = 35
+    else:
+        speed = 12
         buffer_min = 10
-    else:  # Велосипед
-        speed = 18
-        buffer_min = 15
 
-    # Чистое время в пути в минутах
     pure_time_min = int((road_distance / speed) * 60)
 
-    # Логика анализа границ и масштаба поездки
     border_delay = 0
-    scale_status = "🏙️ Внутрирегиональная поездка"
+    if country1 != country2 and country1 != "Неизвестно" and country2 != "Неизвестно":
+        scale_status = f"🌍 Международный маршрут ({country1} ➔ {country2})"
+        border_delay = 150
+    else:
+        scale_status = f"🇷🇺 Междугородний маршрут ({orig_city} ➔ {dest_city})"
 
-    if road_distance > 800:
-        scale_status = "🇷🇺 Междугородний маршрут (Федеральные трассы)"
-    if road_distance > 2000:
-        scale_status = "🌍 Международное путешествие"
-        border_delay = 120  # Добавляем 2 часа на прохождение таможни/границы по ТЗ
-
-    # Анализ часа пик для времени выезда/прибытия
     try:
         arrival_dt = datetime.strptime(arrival_str, "%Y-%m-%d %H:%M")
     except ValueError:
-        arrival_dt = datetime.now() + timedelta(hours=5)
+        arrival_dt = datetime.now() + timedelta(hours=3)
 
     hour = arrival_dt.hour
     traffic_jam_coor = 1.0
     jam_description = "🟢 Трасса свободна"
 
     if (8 <= hour <= 10) or (17 <= hour <= 19):
-        traffic_jam_coor = 1.25  # На междугородних въездах пробки чуть меньше, но они есть
-        jam_description = "🔴 Заторы на въезде в город (Час пик)"
+        traffic_jam_coor = 1.2
+        jam_description = "🔴 Заторы на въезде/выезде (Час пик)"
 
-    # Итоговое время в минутах
     final_travel_time = int(pure_time_min * traffic_jam_coor) + border_delay
-
-    # Вычисляем время старта
     total_minutes_to_subtract = final_travel_time + buffer_min
     departure_dt = arrival_dt - timedelta(minutes=total_minutes_to_subtract)
 

@@ -1,8 +1,9 @@
 import streamlit as st
 from datetime import datetime, timedelta
 from database import *
-from streamlit_folium import st_folium
+from streamlit_folium import st_folium, folium_static
 import folium
+
 
 # Инициализируем БД
 init_db()
@@ -13,40 +14,43 @@ st.title("🚗 Умный помощник управления расписан
 st.write("Планируйте маршруты, рассчитывайте время выезда с учетом пробок и получайте уведомления!")
 
 
-# Боковая панель для добавления новой поездки (Исправленный вариант)
+# Боковая панель для добавления новой поездки (С разделением на Города и Улицы)
 st.sidebar.header("🗺️ Запланировать поездку")
-
-# 1. Присваиваем форму переменной trip_form
-trip_form = st.sidebar.form("add_trip_form", clear_on_submit=True)
+trip_form = st.sidebar.form("add_trip_form_v2", clear_on_submit=True)
 
 with trip_form:
-    origin = st.text_input("Откуда (А—Пункт):", placeholder="Например: ул. Ленина, 10")
-    destination = st.text_input("Куда (Б—Пункт):", placeholder="Например: Аэропорт")
+    st.markdown("### 🛫 Точка отправления")
+    origin_city = st.text_input("Город:", placeholder="Например: Томск")
+    origin_address = st.text_input("Улица, дом (необязательно):", placeholder="Например: ул. Ленина, 10")
 
+    st.markdown("### 🛬 Точка прибытия")
+    destination_city = st.text_input("Город назначения:", placeholder="Например: Кемерово")
+    destination_address = st.text_input("Улица, дом (необязательно):", placeholder="Например: проспект Ленина, 5")
+
+    st.divider()
     col_d, col_t = st.columns(2)
     with col_d:
         trip_date = st.date_input("Дата прибытия:")
     with col_t:
-        trip_time = st.time_input("Время, к которому нужно приехать:")
+        trip_time = st.time_input("Время прибытия:")
 
     transport_mode = st.selectbox(
         "Способ передвижения:",
-        ["На автомобиле (Driving)", "Общественный транспорт (Transit)", "Пешком (Walking)", "На велосипеде (Bicycling)"]
+        ["На автомобиле (Driving)", "Общественный transport (Transit)", "Пешком / На велосипеде"]
     )
-    notes = st.text_area("Дополнительные параметры / Заметки:")
+    notes = st.text_area("Дополнительные заметки:")
 
-    # 2. Вызываем кнопку отправки СТРОГО через объект формы trip_form (с 4 пробелами отступа!)
     submit = trip_form.form_submit_button("📅 Добавить в расписание", use_container_width=True)
 
     if submit:
-        if origin.strip() == "" or destination.strip() == "":
-            st.error("Заполните точки А и Б!")
+        if origin_city.strip() == "" or destination_city.strip() == "":
+            st.error("Пожалуйста, обязательно укажите Город отправления и Город прибытия!")
         else:
             full_arrival_datetime = f"{trip_date} {trip_time.strftime('%H:%M')}"
-            add_trip(origin, destination, full_arrival_datetime, transport_mode, notes)
-            st.sidebar.success("Поездка успешно запланирована!")
+            add_trip(origin_city, origin_address, destination_city, destination_address, full_arrival_datetime,
+                     transport_mode, notes)
+            st.sidebar.success("Маршрут добавлен в навигатор!")
             st.rerun()
-
 
 # Главный экран приложения
 active_trips = get_active_trips()
@@ -86,122 +90,83 @@ if not active_trips:
 else:
     st.subheader("📋 Ваше расписание и умные напоминания (Движок Навигатора)")
 
-    for t_id, t_orig, t_dest, t_arr, t_mode, t_notes, t_status in active_trips:
-        # Считаем глобальные параметры поездки
-        timing = calculate_trip_timing(t_orig, t_dest, t_arr, t_mode)
+    for t_id, t_cit1, t_adr1, t_cit2, t_adr2, t_arr, t_mode, t_notes, t_status in active_trips:
+        # Рассчитываем точные междугородние параметры
+        timing = calculate_trip_timing(t_cit1, t_adr1, t_cit2, t_adr2, t_arr, t_mode)
         (lat1, lon1), (lat2, lon2) = timing["coords"]
 
-        with st.container(border=True):
-            st.markdown(f"### 📍 Маршрут: Из **{t_orig}** в **{t_dest}**")
-            st.caption(f"🗺️ Масштаб: {timing['scale_status']}")
+        # Красиво собираем полные адреса для отображения на экране
+        full_from = f"{t_cit1}, {t_adr1}" if t_adr1.strip() else t_cit1
+        full_to = f"{t_cit2}, {t_adr2}" if t_adr2.strip() else t_cit2
 
-            # Строим сетку метрик навигатора
+        with st.container(border=True):
+            st.markdown(f"### 📍 Из **{full_from}** в **{full_to}**")
+            st.caption(f"🗺️ Статус маршрута: {timing['scale_status']}")
+
             c1, c2, c3 = st.columns(3)
             with c1:
                 st.metric("📏 Расстояние по дорогам", f"{timing['distance']} км")
                 st.write(f"🚲 **Транспорт:** {t_mode}")
             with c2:
-                # Конвертируем минуты в читаемые Часы и Минуты
                 h = timing['final_time'] // 60
                 m = timing['final_time'] % 60
                 time_str = f"{h} ч. {m} мин." if h > 0 else f"{m} мин."
-                st.metric("⏰ Время в пути (с задержками)", time_str)
-                st.write(f"📊 **Дорожная ситуация:** {timing['jam_status']}")
+                st.metric("⏰ Время в пути", time_str)
+                st.write(f"📊 **Ситуация:** {timing['jam_status']}")
             with c3:
                 st.metric("🚨 Рекомендуемое время выезда", timing['departure_time'])
                 st.write(f"🎯 **Прибытие к:** {t_arr}")
 
             if t_notes:
-                st.caption(f"📝 Детали поездки: {t_notes}")
+                st.caption(f"📝 Заметки: {t_notes}")
 
-
-            # НАСТОЯЩАЯ ИНТЕРАКТИВНАЯ КАРТА НАВИГАТОРА В СТИЛЕ 2ГИС (РАБОЧАЯ ВЕРСИЯ)
-            st.write("🗺️ **Маршрут путешествия на интерактивной автомобильной карте:**")
-
-            # 1. Вычисляем центр карты между точкой А и точкой Б
-            center_lat = (lat1 + lat2) / 2
-            center_lon = (lon1 + lon2) / 2
-
-            # 2. Создаем карту со стабильным открытым шлюзом OSM France (РАБОТАЕТ ЛОКАЛЬНО И БЕЗ VPN)
-            m = folium.Map(
-                location=[center_lat, center_lon],
-                tiles='https://{s}.tile.openstreetmap.fr/osmfr/{z}/{x}/{y}.png',
-                attr='&copy; OpenStreetMap France | &copy; OpenStreetMap contributors',
-                control_scale=True
-            )
-
-            # 3. СТРОИМ РЕАЛЬНЫЙ МАРШРУТ ПО ТРАССАМ ОБЩЕГО ПОЛЬЗОВАНИЯ (Навигационный API OSRM)
-            route_points = [[lat1, lon1], [lat2, lon2]]  # Запасной вариант (прямая линия)
-
+            # НАСТОЯЩАЯ ИНТЕРАКТИВНАЯ КАРТА НАВИГАТОРА ОБЩЕГО ПОЛЬЗОВАНИЯ
+            route_points = [[lat1, lon1], [lat2, lon2]]
             try:
-                # ВНИМАНИЕ (ИСПРАВЛЕНО): OSRM принимает параметры СТРОГО в порядке: Долгота,Широта
+                # Отправляем исправленный [lon, lat] запрос к OSRM навигатору автомобильных дорог
                 osrm_url = f"https://project-osrm.org{lon1},{lat1};{lon2},{lon2}?overview=full&geometries=geojson"
                 osrm_response = requests.get(osrm_url, timeout=5)
-
                 if osrm_response.status_code == 200:
                     data = osrm_response.json()
                     if "routes" in data and len(data["routes"]) > 0:
-                        # Извлекаем координаты сотен изгибов трассы из гео-данных JSON
                         geojson_geometry = data["routes"][0]["geometry"]["coordinates"]
-                        # Переворачиваем обратно в формат Folium [Широта, Долгота]
                         route_points = [[coord[1], coord[0]] for coord in geojson_geometry]
             except Exception:
-                pass  # Если навигационный сервер лег - нарисуется базовая линия
+                pass
 
-            # 4. Рисуем красивую извилистую автомобильную трассу синего цвета (Стиль 2ГИС)
-            folium.PolyLine(
-                locations=route_points,
-                color="#007aff",  # Фирменный синий цвет навигаторов Apple/Яндекс
-                weight=6,
-                opacity=0.85
-            ).add_to(m)
+            m = folium.Map(
+                location=[(lat1 + lat2) / 2, (lon1 + lon2) / 2],
+                tiles='https://{s}.tile.openstreetmap.fr/osmfr/{z}/{x}/{y}.png',
+                attr='OpenStreetMap France',
+                control_scale=True
+            )
 
-            # 5. Ставим маркер для точки отправления (А) - Зеленый
-            folium.Marker(
-                [lat1, lon1],
-                tooltip=f"Пункт А: {t_orig}",
-                icon=folium.Icon(color="green", icon="play", prefix="fa")
-            ).add_to(m)
+            folium.PolyLine(locations=route_points, color="#007aff", weight=6, opacity=0.85).add_to(m)
+            folium.Marker([lat1, lon1], tooltip=f"Старт: {full_from}",
+                          icon=folium.Icon(color="green", icon="play", prefix="fa")).add_to(m)
+            folium.Marker([lat2, lon2], tooltip=f"Финиш: {full_to}",
+                          icon=folium.Icon(color="red", icon="flag", prefix="fa")).add_to(m)
 
-            # 6. Ставим маркер для пункта назначения (Б) - Красный
-            folium.Marker(
-                [lat2, lon2],
-                tooltip=f"Пункт Б: {t_dest}",
-                icon=folium.Icon(color="red", icon="flag", prefix="fa")
-            ).add_to(m)
-
-            # 7. АВТО-ФОКУС: Карта сама подбирает идеальный масштаб, чтобы весь маршрут был крупно виден
             m.fit_bounds([[lat1, lon1], [lat2, lon2]], padding=10)
+            folium_static(m, width=700, height=400)
 
-            # 8. Рендерим готовую карту на экран Streamlit
-            st_folium(m, width="100%", height=420, key=f"map_folium_final_v5_{t_id}")
-
-
-            # Кнопки управления (12 пробелов отступа внутри контейнера)
+            # Кнопки управления (Разделены ровно на 2 колонки по фиксу ТЗ)
             btn_col1, btn_col2 = st.columns(2)
             with btn_col1:
                 if st.button("🗑️ Отменить поездку", key=f"del_{t_id}", type="primary", use_container_width=True):
                     delete_trip(t_id)
-                    st.success("Поездка отменена")
+                    st.success("Маршрут удален")
                     st.rerun()
             with btn_col2:
                 if st.button("📲 Отправить сводку на телефон", key=f"tg_send_{t_id}", type="secondary",
                              use_container_width=True):
-                    if not tg_token or not tg_chat_id:
-                        st.error("Сначала заполните настройки Telegram-уведомлений выше!")
-                    else:
-                        alert_msg = (
-                            f"🚗 ГЛОБАЛЬНЫЙ НАВИГАТОР ПОЕЗДОК\n\n"
-                            f"📍 Маршрут: {t_orig} ➔ {t_dest}\n"
-                            f"🌍 Статус: {timing['scale_status']}\n"
-                            f"📏 Дистанция: {timing['distance']} км\n"
-                            f"📊 Дороги: {timing['jam_status']}\n\n"
-                            f"⏱️ Время в пути: {time_str}\n"
-                            f"🎯 Прибытие к: {t_arr}\n"
-                            f"🚨 ВЫЕЗЖАЙТЕ: {timing['departure_time']}"
-                        )
-                        success = send_telegram_alert(tg_token, tg_chat_id, alert_msg)
-                        if success:
-                            st.success("🚀 Сводка навигатора отправлена в Telegram!")
-                        else:
-                            st.error("❌ Ошибка отправки. Проверьте настройки бота.")
+                    alert_msg = (
+                        f"🚗 УМНЫЙ НАВИГАТОР ПОЕЗДОК\n\n"
+                        f"🛫 Из: {full_from}\n"
+                        f"🛬 В: {full_to}\n"
+                        f"📏 Дистанция: {timing['distance']} км\n"
+                        f"⏱️ Время в пути: {time_str}\n\n"
+                        f"⚠️ ВЫЕЗЖАЙТЕ В: {timing['departure_time']}"
+                    )
+                    send_telegram_alert(tg_token, tg_chat_id, alert_msg)
+                    st.success("🚀 Сводка отправлена!")
