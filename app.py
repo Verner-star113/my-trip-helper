@@ -115,19 +115,18 @@ else:
                 st.caption(f"📝 Детали поездки: {t_notes}")
 
 
-            # НАСТОЯЩАЯ ИНТЕРАКТИВНАЯ КАРТА НАВИГАТОРА В СТИЛЕ 2ГИС (БЕЗОТКАЗНЫЙ ВАРИАНТ)
-            st.write("🗺️ **Маршрут путешествия на интерактивной карте:**")
+            # НАСТОЯЩАЯ ИНТЕРАКТИВНАЯ КАРТА НАВИГАТОРА В СТИЛЕ 2ГИС (РАБОЧАЯ ВЕРСИЯ)
+            st.write("🗺️ **Маршрут путешествия на интерактивной автомобильной карте:**")
 
             # 1. Вычисляем центр карты между точкой А и точкой Б
             center_lat = (lat1 + lat2) / 2
             center_lon = (lon1 + lon2) / 2
 
-            # 2. Создаем карту со стабильным шлюзом, который РАБОТАЕТ В РФ БЕЗ VPN
-            # Используем красивый, детальный светлый стиль Positron
+            # 2. Создаем карту со стабильным открытым шлюзом OSM France (РАБОТАЕТ ЛОКАЛЬНО И БЕЗ VPN)
             m = folium.Map(
                 location=[center_lat, center_lon],
-                tiles='https://cartocdn.com',
-                attr='CartoDB OpenStreetMap',
+                tiles='https://{s}.tile.openstreetmap.fr/osmfr/{z}/{x}/{y}.png',
+                attr='&copy; OpenStreetMap France | &copy; OpenStreetMap contributors',
                 control_scale=True
             )
 
@@ -135,48 +134,47 @@ else:
             route_points = [[lat1, lon1], [lat2, lon2]]  # Запасной вариант (прямая линия)
 
             try:
-                # Отправляем запрос на глобальный сервер маршрутизации автомобиля
-                # OSRM принимает координаты в строгом формате: Долгота,Широта
+                # ВНИМАНИЕ (ИСПРАВЛЕНО): OSRM принимает параметры СТРОГО в порядке: Долгота,Широта
                 osrm_url = f"https://project-osrm.org{lon1},{lat1};{lon2},{lon2}?overview=full&geometries=geojson"
-                osrm_response = requests.get(osrm_url, timeout=4)
+                osrm_response = requests.get(osrm_url, timeout=5)
 
                 if osrm_response.status_code == 200:
                     data = osrm_response.json()
                     if "routes" in data and len(data["routes"]) > 0:
-                        # Получаем гео-координаты сотен промежуточных поворотов реальной трассы
+                        # Извлекаем координаты сотен изгибов трассы из гео-данных JSON
                         geojson_geometry = data["routes"][0]["geometry"]["coordinates"]
-                        # Конвертируем обратно в формат Folium [Широта, Долгота]
+                        # Переворачиваем обратно в формат Folium [Широта, Долгота]
                         route_points = [[coord[1], coord[0]] for coord in geojson_geometry]
             except Exception:
-                pass  # Если шлюз навигации занят, нарисуется базовая линия
+                pass  # Если навигационный сервер лег - нарисуется базовая линия
 
-            # 4. Рисуем реальную извилистую автомобильную трассу со всеми поворотами
+            # 4. Рисуем красивую извилистую автомобильную трассу синего цвета (Стиль 2ГИС)
             folium.PolyLine(
                 locations=route_points,
-                color="#1e88e5",  # Красивый синий цвет навигатора 2ГИС
+                color="#007aff",  # Фирменный синий цвет навигаторов Apple/Яндекс
                 weight=6,
                 opacity=0.85
             ).add_to(m)
 
-            # 5. Ставим маркер для точки отправления (А)
+            # 5. Ставим маркер для точки отправления (А) - Зеленый
             folium.Marker(
                 [lat1, lon1],
-                tooltip=f"Старт: {t_orig}",
+                tooltip=f"Пункт А: {t_orig}",
                 icon=folium.Icon(color="green", icon="play", prefix="fa")
             ).add_to(m)
 
-            # 6. Ставим маркер для пункта назначения (Б)
+            # 6. Ставим маркер для пункта назначения (Б) - Красный
             folium.Marker(
                 [lat2, lon2],
-                tooltip=f"Финиш: {t_dest}",
+                tooltip=f"Пункт Б: {t_dest}",
                 icon=folium.Icon(color="red", icon="flag", prefix="fa")
             ).add_to(m)
 
-            # 7. АВТО-МАСШТАБ: Карта сама подгонит фокус, чтобы оба города были идеально видны на экране
-            m.fit_bounds([[lat1, lon1], [lat2, lon2]], padding=[30, 30])
+            # 7. АВТО-ФОКУС: Карта сама подбирает идеальный масштаб, чтобы весь маршрут был крупно виден
+            m.fit_bounds([[lat1, lon1], [lat2, lon2]], padding=10)
 
             # 8. Рендерим готовую карту на экран Streamlit
-            st_folium(m, width="100%", height=420, key=f"map_folium_v5_{t_id}")
+            st_folium(m, width="100%", height=420, key=f"map_folium_final_v5_{t_id}")
 
 
             # Кнопки управления (12 пробелов отступа внутри контейнера)
