@@ -114,63 +114,69 @@ else:
             if t_notes:
                 st.caption(f"📝 Детали поездки: {t_notes}")
 
-            # ИНТЕРАКТИВНАЯ КАРТА МИРА 2ГИС-СТИЛЬ
-            st.write("🗺️ **Визуализация маршрута на карте мира:**")
 
-            # НАСТОЯЩАЯ ИНТЕРАКТИВНАЯ КАРТА НАВИГАТОРА (БЕЗОТКАЗНЫЙ ВАРИАНТ)
+            # НАСТОЯЩАЯ ИНТЕРАКТИВНАЯ КАРТА НАВИГАТОРА В СТИЛЕ 2ГИС (БЕЗОТКАЗНЫЙ ВАРИАНТ)
+            st.write("🗺️ **Маршрут путешествия на интерактивной карте:**")
+
             # 1. Вычисляем центр карты между точкой А и точкой Б
             center_lat = (lat1 + lat2) / 2
             center_lon = (lon1 + lon2) / 2
 
-            # 2. Создаем базовый объект карты Folium (без жесткого зума!)
-            m = folium.Map(location=[center_lat, center_lon], control_scale=True)
+            # 2. Создаем карту со стабильным шлюзом, который РАБОТАЕТ В РФ БЕЗ VPN
+            # Используем красивый, детальный светлый стиль Positron
+            m = folium.Map(
+                location=[center_lat, center_lon],
+                tiles='https://cartocdn.com',
+                attr='CartoDB OpenStreetMap',
+                control_scale=True
+            )
 
-            # 3. Ставим маркер для точки отправления (А)
-            folium.Marker(
-                [lat1, lon1],
-                tooltip=f"Пункт А: {t_orig}",
-                icon=folium.Icon(color="green", icon="play")
-            ).add_to(m)
-
-            # 4. Ставим маркер для пункта назначения (Б)
-            folium.Marker(
-                [lat2, lon2],
-                tooltip=f"Пункт Б: {t_dest}",
-                icon=folium.Icon(color="red", icon="stop")
-            ).add_to(m)
-
-            # 5. СТРОИМ РЕАЛЬНЫЙ МАРШРУТ ПО ДОРОГАМ (ЧЕРЕЗ БЕСПЛАТНЫЙ НАВИГАЦИОННЫЙ API OSRM)
-            route_points = [[lat1, lon1], [lat2, lon2]]  # По умолчанию прямая линия
+            # 3. СТРОИМ РЕАЛЬНЫЙ МАРШРУТ ПО ТРАССАМ ОБЩЕГО ПОЛЬЗОВАНИЯ (Навигационный API OSRM)
+            route_points = [[lat1, lon1], [lat2, lon2]]  # Запасной вариант (прямая линия)
 
             try:
-                # Делаем запрос к открытому серверу маршрутизации для автомобиля
-                # Внимание: OSRM принимает координаты в формате [Долгота,Широта]
+                # Отправляем запрос на глобальный сервер маршрутизации автомобиля
+                # OSRM принимает координаты в строгом формате: Долгота,Широта
                 osrm_url = f"https://project-osrm.org{lon1},{lat1};{lon2},{lon2}?overview=full&geometries=geojson"
                 osrm_response = requests.get(osrm_url, timeout=4)
 
                 if osrm_response.status_code == 200:
                     data = osrm_response.json()
                     if "routes" in data and len(data["routes"]) > 0:
-                        # Извлекаем гео-координаты всех поворотов реальной трассы
+                        # Получаем гео-координаты сотен промежуточных поворотов реальной трассы
                         geojson_geometry = data["routes"][0]["geometry"]["coordinates"]
-                        # Переворачиваем обратно в формат Folium [Широта, Долгота]
+                        # Конвертируем обратно в формат Folium [Широта, Долгота]
                         route_points = [[coord[1], coord[0]] for coord in geojson_geometry]
             except Exception:
-                pass  # Если интернета нет или сервер лег - нарисуется базовая прямая линия
+                pass  # Если шлюз навигации занят, нарисуется базовая линия
 
-            # Рисуем извилистую реальную автомобильную трассу, соединяющую города!
+            # 4. Рисуем реальную извилистую автомобильную трассу со всеми поворотами
             folium.PolyLine(
                 locations=route_points,
-                color="blue",
-                weight=5,
+                color="#1e88e5",  # Красивый синий цвет навигатора 2ГИС
+                weight=6,
                 opacity=0.85
             ).add_to(m)
 
-            # 6. МАГИЯ АВТО-МАСШТАБА: Заставляем карту идеально сфокусироваться на точках маршрута
+            # 5. Ставим маркер для точки отправления (А)
+            folium.Marker(
+                [lat1, lon1],
+                tooltip=f"Старт: {t_orig}",
+                icon=folium.Icon(color="green", icon="play", prefix="fa")
+            ).add_to(m)
+
+            # 6. Ставим маркер для пункта назначения (Б)
+            folium.Marker(
+                [lat2, lon2],
+                tooltip=f"Финиш: {t_dest}",
+                icon=folium.Icon(color="red", icon="flag", prefix="fa")
+            ).add_to(m)
+
+            # 7. АВТО-МАСШТАБ: Карта сама подгонит фокус, чтобы оба города были идеально видны на экране
             m.fit_bounds([[lat1, lon1], [lat2, lon2]], padding=[30, 30])
 
-            # 7. Рендерим готовую адаптивную карту на экран Streamlit
-            st_folium(m, width="100%", height=400, key=f"map_folium_{t_id}")
+            # 8. Рендерим готовую карту на экран Streamlit
+            st_folium(m, width="100%", height=420, key=f"map_folium_v5_{t_id}")
 
 
             # Кнопки управления (12 пробелов отступа внутри контейнера)
